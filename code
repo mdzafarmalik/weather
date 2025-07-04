@@ -1,0 +1,284 @@
+<?php
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+if (isset($_GET['logout'])) {
+    session_destroy();
+    header("Location: index.php");
+    exit;
+}
+
+if (isset($_GET['city'])) {
+    header('Content-Type: application/json');
+    $apiKey = "5876ecd64ad0430d7eebb4125e071e1f"; // Replace with your valid API key
+    $city = urlencode($_GET['city']);
+    $apiUrl = "https://api.openweathermap.org/data/2.5/forecast?q={$city}&appid={$apiKey}&units=metric";
+
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $apiUrl);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $response = curl_exec($ch);
+    
+    if (curl_errno($ch)) {
+        echo json_encode(["error" => curl_error($ch)]);
+    } else {
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        if ($httpCode === 401) {
+            echo json_encode(["error" => "Unauthorized: Invalid API key."]);
+        } else {
+            function celsiusToFahrenheit($celsius) {
+                return ($celsius * 9/5) + 32;
+            }
+            $data = json_decode($response, true);
+            foreach ($data['list'] as &$item) {
+                $item['main']['temp_f'] = round(celsiusToFahrenheit($item['main']['temp']), 1);
+                $item['main']['feels_like_f'] = round(celsiusToFahrenheit($item['main']['feels_like']), 1);
+            }
+            echo json_encode($data);
+        }
+    }
+    curl_close($ch);
+    exit;
+}
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Weather App</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      content: ["index.php"],
+      theme: {
+        extend: {
+          colors: {
+            'gray-900': '#1a202c',
+            'gray-800': '#2d3748',
+            'gray-700': '#4a5568',
+            'gray-600': '#718096',
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    .glow-on-hover {
+      position: relative;
+      overflow: hidden;
+      transition: all 0.3s ease;
+    }
+    .glow-on-hover:before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(255, 255, 255, 0.5);
+      filter: blur(10px);
+      opacity: 0;
+      transition: all 0.3s ease;
+      z-index: 0;
+    }
+    .glow-on-hover:hover:before {
+      opacity: 1;
+    }
+    .loading {
+      display: none;
+    }
+    .loading.active {
+      display: block;
+    }
+  </style>
+</head>
+<body class="bg-gray-100 text-gray-900 dark:bg-gray-900 dark:text-white min-h-screen transition">
+
+<div class="max-w-xl mx-auto py-10 px-4">
+  <div class="flex justify-between items-center mb-6">
+    <h1 class="text-3xl font-bold">Weather App</h1>
+    <button id="themeToggle" class="p-2 rounded bg-gray-200 dark:bg-gray-700" aria-label="Toggle theme">
+      <span id="themeIcon">🌙</span>
+    </button>
+  </div>
+
+  <div class="mb-6 flex gap-2">
+    <input id="cityInput" type="text" placeholder="Enter city..." class="w-full p-3 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800" />
+    <button onclick="fetchWeather(document.getElementById('cityInput').value)" class="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700">Search</button>
+    <button onclick="getCurrentLocation()" class="glow-on-hover px-4 py-2 rounded bg-green-600 text-white hover:bg-green-700">Current Location</button>
+    <button onclick="clearInput()" class="px-4 py-2 rounded bg-red-600 text-white hover:bg-red-700">Clear</button>
+  </div>
+
+  <div class="flex justify-center mb-4">
+    <button id="celsiusBtn" class="px-4 py-2 rounded bg-gray-200 dark:bg-gray-700">°C</button>
+    <button id="fahrenheitBtn" class="px-4 py-2 rounded bg-gray-200 dark:bg-gray-700">°F</button>
+  </div>
+
+  <div class="loading" id="loadingSpinner">Loading...</div>
+
+  <div class="bg-gray-200 dark:bg-gray-800 p-6 rounded-lg shadow-md">
+    <h2 id="city-name" class="text-2xl font-bold mb-2">City Name</h2>
+    <p id="temperature" class="text-4xl font-semibold">--°C</p>
+    <p id="description" class="mb-2">Description</p>
+    <p id="details" class="text-sm">Details here</p>
+  </div>
+
+  <div class="grid grid-cols-2 gap-4 mt-6 text-center">
+    <div class="bg-gray-200 dark:bg-gray-800 p-4 rounded">
+      <p>Humidity</p><p id="humidity" class="text-lg font-semibold">--%</p>
+    </div>
+    <div class="bg-gray-200 dark:bg-gray-800 p-4 rounded">
+      <p>Wind</p><p id="wind" class="text-lg font-semibold">-- m/s</p>
+    </div>
+    <div class="bg-gray-200 dark:bg-gray-800 p-4 rounded">
+      <p>Pressure</p><p id="pressure" class="text-lg font-semibold">-- hPa</p>
+    </div>
+    <div class="bg-gray-200 dark:bg-gray-800 p-4 rounded">
+      <p>Visibility</p><p id="visibility" class="text-lg font-semibold">-- km</p>
+    </div>
+  </div>
+
+  <h3 class="mt-8 text-center text-xl font-semibold">5-Day Forecast</h3>
+  <div id="forecast" class="grid grid-cols-2 md:grid-cols-5 gap-4 mt-4"></div>
+</div>
+
+<script>
+let data = null;
+let currentUnit = 'C';
+
+function setTheme(dark) {
+  document.documentElement.classList.toggle('dark', dark);
+  themeIcon.textContent = dark ? '☀️' : '🌙';
+  localStorage.setItem('theme', dark ? 'dark' : 'light');
+}
+
+document.getElementById('themeToggle').addEventListener('click', () => {
+  setTheme(!document.documentElement.classList.contains('dark'));
+});
+
+(function () {
+  const saved = localStorage.getItem('theme');
+  setTheme(saved === 'dark' || (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches));
+})();
+
+document.getElementById('celsiusBtn').addEventListener('click', () => {
+  currentUnit = 'C';
+  updateTemperatureDisplay();
+});
+document.getElementById('fahrenheitBtn').addEventListener('click', () => {
+  currentUnit = 'F';
+  updateTemperatureDisplay();
+});
+
+document.getElementById('cityInput').addEventListener('keypress', function (e) {
+  if (e.key === 'Enter') fetchWeather(this.value);
+});
+
+function clearInput() {
+  document.getElementById('cityInput').value = '';
+  resetDisplay();
+}
+
+function resetDisplay() {
+  document.getElementById('city-name').textContent = 'City Name';
+  document.getElementById('temperature').textContent = '--°C';
+  document.getElementById('description').textContent = 'Description';
+  document.getElementById('details').textContent = 'Details here';
+  document.getElementById('humidity').textContent = '--%';
+  document.getElementById('wind').textContent = '-- m/s';
+  document.getElementById('pressure').textContent = '-- hPa';
+  document.getElementById('visibility').textContent = '-- km';
+  document.getElementById('forecast').innerHTML = '';
+}
+
+function fetchWeather(city) {
+  document.getElementById('loadingSpinner').classList.add('active');
+  fetch(`?city=${encodeURIComponent(city)}`)
+    .then(res => res.json())
+    .then(resData => {
+      data = resData;
+      document.getElementById('loadingSpinner').classList.remove('active');
+      if (!data || !data.list || !data.city) {
+        alert("Invalid city or data not found");
+        return;
+      }
+      updateTemperatureDisplay();
+      document.getElementById('humidity').textContent = data.list[0].main.humidity + '%';
+      document.getElementById('wind').textContent = data.list[0].wind.speed + ' m/s';
+      document.getElementById('pressure').textContent = data.list[0].main.pressure + ' hPa';
+      document.getElementById('visibility').textContent = (data.list[0].visibility / 1000).toFixed(1) + ' km';
+      document.getElementById('city-name').textContent = data.city.name + ', ' + data.city.country;
+      updateForecastDisplay();
+    })
+    .catch(() => {
+      document.getElementById('loadingSpinner').classList.remove('active');
+      alert('Failed to load weather data.');
+    });
+}
+
+function updateTemperatureDisplay() {
+  if (!data) return;
+  const current = data.list[0];
+  const temp = currentUnit === 'C' ? Math.round(current.main.temp) : Math.round(current.main.temp_f);
+  const feels = currentUnit === 'C' ? Math.round(current.main.feels_like) : Math.round(current.main.feels_like_f);
+  document.getElementById('temperature').textContent = `${temp}°${currentUnit}`;
+  document.getElementById('description').textContent = current.weather[0].description;
+  document.getElementById('details').textContent = `Feels like ${feels}°${currentUnit}. Humidity: ${current.main.humidity}%. Wind: ${current.wind.speed} m/s.`;
+}
+
+function updateForecastDisplay() {
+  const forecast = document.getElementById('forecast');
+  forecast.innerHTML = '';
+  for (let i = 0; i < data.list.length; i += 8) {
+    const day = data.list[i];
+    const date = new Date(day.dt * 1000);
+    const dayName = date.toLocaleDateString('en-US', { weekday: 'short' });
+    const icon = day.weather[0].icon;
+    const temp = currentUnit === 'C' ? Math.round(day.main.temp) : Math.round(day.main.temp_f);
+    forecast.innerHTML += `
+      <div class="bg-gray-200 dark:bg-gray-800 p-4 rounded text-center">
+        <h4 class="font-semibold">${dayName}</h4>
+        <img src="https://openweathermap.org/img/wn/${icon}@2x.png" class="mx-auto" alt="">
+        <p class="mt-2">${temp}°${currentUnit}</p>
+      </div>
+    `;
+  }
+}
+
+function getCurrentLocation() {
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(position => {
+      console.log("Location found:", position);
+
+      const lat = position.coords.latitude;
+      const lon = position.coords.longitude;
+
+      const apiKey = "5876ecd64ad0430d7eebb4125e071e1f"; // Ensure this is a valid API key
+      fetch(`https://api.openweathermap.org/geo/1.0/reverse?lat=${lat}&lon=${lon}&limit=1&appid=${apiKey}`)
+        .then(res => res.json())
+        .then(locationData => {
+          console.log("Reverse geocode response:", locationData);
+          if (Array.isArray(locationData) && locationData.length && locationData[0].name) {
+            const city = locationData[0].name;
+            document.getElementById('cityInput').value = city;
+            fetchWeather(city);
+          } else {
+            alert("Could not detect your city.");
+          }
+        }).catch(error => {
+          console.error("Error in reverse geocoding:", error);
+          alert("Failed to detect city from location.");
+        });
+    }, err => {
+      console.error("Geolocation error:", err);
+      alert('Location permission denied. Please allow location access.');
+    });
+  } else {
+    alert('Geolocation is not supported by this browser.');
+  }
+}
+
+// Automatically fetch weather for the current location on page load
+window.onload = getCurrentLocation;
+</script>
+</body>
+</html>
